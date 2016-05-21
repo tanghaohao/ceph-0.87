@@ -429,7 +429,8 @@ OPTION(osd_agent_hist_halflife, OPT_INT, 1000)
 // must be this amount over the threshold to enable,
 // this amount below the threshold to disable.
 OPTION(osd_agent_slop, OPT_FLOAT, .02)
-
+OPTION(nvm_hot_journal, OPT_STR, "")
+OPTION(nvm_cold_journal, OPT_STR, "")
 OPTION(osd_uuid, OPT_UUID, uuid_d())
 OPTION(osd_data, OPT_STR, "/var/lib/ceph/osd/$cluster-$id")
 OPTION(osd_journal, OPT_STR, "/var/lib/ceph/osd/$cluster-$id/journal")
