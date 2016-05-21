@@ -1,0 +1,2 @@
+var/log/radosgw
+var/lib/ceph/radosgw
