@@ -2255,7 +2255,8 @@ unsigned FileStore::_do_transaction(
 	uint64_t len = i.decode_length();
 	bool replica = i.get_replica();
 	bufferlist bl;
-	i.decode_bl(bl);
+	// i.decode_bl(bl);
+    i.decode_data(bl, len);
         tracepoint(objectstore, write_enter, osr_name, off, len);
 	if (_check_replay_guard(cid, oid, spos) > 0)
 	  r = _write(cid, oid, off, len, bl, replica);

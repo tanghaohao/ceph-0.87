@@ -386,8 +386,12 @@ public:
   private:
     uint64_t ops;
     uint64_t pad_unused_bytes;
-    uint32_t largest_data_len, largest_data_off, largest_data_off_in_tbl;
+    uint32_t largest_data_len, largest_data_off, largest_data_off_in_data;
     bufferlist tbl;
+    
+    bufferlist data;
+    list< pair<ghobject_t, bufferlist> > data_list;
+    
     bool sobject_encoding;
     int64_t pool_override;
     bool use_pool_override;
@@ -423,26 +427,30 @@ public:
       register_on_applied(new ContainerContext<RunOnDeleteRef>(_complete));
       register_on_commit(new ContainerContext<RunOnDeleteRef>(_complete));
     }
-
     static void collect_contexts(
       list<Transaction *> &t,
       Context **out_on_applied,
       Context **out_on_commit,
-      Context **out_on_applied_sync) {
-      assert(out_on_applied);
-      assert(out_on_commit);
-      assert(out_on_applied_sync);
+      Context **out_on_applied_sync) 
+    {
+      assert(out_on_applied || out_on_commit || out_on_applied_sync); // + by tanghao
       list<Context *> on_applied, on_commit, on_applied_sync;
       for (list<Transaction *>::iterator i = t.begin();
 	   i != t.end();
 	   ++i) {
-	on_applied.splice(on_applied.end(), (*i)->on_applied);
-	on_commit.splice(on_commit.end(), (*i)->on_commit);
-	on_applied_sync.splice(on_applied_sync.end(), (*i)->on_applied_sync);
+	if (out_on_applied)
+	  on_applied.splice(on_applied.end(), (*i)->on_applied);
+	if (out_on_commit)
+	  on_commit.splice(on_commit.end(), (*i)->on_commit);
+	if (out_on_applied_sync)
+	  on_applied_sync.splice(on_applied_sync.end(), (*i)->on_applied_sync);
       }
-      *out_on_applied = C_Contexts::list_to_context(on_applied);
-      *out_on_commit = C_Contexts::list_to_context(on_commit);
-      *out_on_applied_sync = C_Contexts::list_to_context(on_applied_sync);
+      if (out_on_applied)
+	*out_on_applied = C_Contexts::list_to_context(on_applied);
+      if (out_on_commit)
+	*out_on_commit = C_Contexts::list_to_context(on_commit);
+      if (out_on_applied_sync)
+	*out_on_applied_sync = C_Contexts::list_to_context(on_applied_sync);
     }
 
     Context *get_on_applied() {
@@ -468,11 +476,13 @@ public:
       std::swap(ops, other.ops);
       std::swap(largest_data_len, other.largest_data_len);
       std::swap(largest_data_off, other.largest_data_off);
-      std::swap(largest_data_off_in_tbl, other.largest_data_off_in_tbl);
+      std::swap(largest_data_off_in_data, other.largest_data_off_in_data);
       std::swap(on_applied, other.on_applied);
       std::swap(on_commit, other.on_commit);
       std::swap(on_applied_sync, other.on_applied_sync);
       tbl.swap(other.tbl);
+      data.swap(other.data);
+      data_list.swap(other.data_list);
     }
 
     /// Append the operations of the parameter to this Transaction. Those operations are removed from the parameter Transaction
@@ -483,9 +493,11 @@ public:
       if (other.largest_data_len > largest_data_len) {
 	largest_data_len = other.largest_data_len;
 	largest_data_off = other.largest_data_off;
-	largest_data_off_in_tbl = tbl.length() + other.largest_data_off_in_tbl;
+        largest_data_off_in_data = data.length() + other.largest_data_off_in_data;
       }
       tbl.append(other.tbl);
+      data.append(other.data);
+      data_list.insert(data_list.end(), other.data_list.begin(), other.data_list.end());
       on_applied.splice(on_applied.end(), other.on_applied);
       on_commit.splice(on_commit.end(), other.on_commit);
       on_applied_sync.splice(on_applied_sync.end(), other.on_applied_sync);
@@ -495,7 +507,7 @@ public:
 
     /// How big is the encoded Transaction buffer?
     uint64_t get_encoded_bytes() {
-      return 1 + 8 + 8 + 4 + 4 + 4 + 4 + tbl.length();
+      return 1 + 8 + 8 + 4 + 4 + 4 + 4 + tbl.length() + 4 + data.length(); // added by tanghao
     }
 
     uint64_t get_num_bytes() {
@@ -507,8 +519,8 @@ public:
     }
     /// offset within the encoded buffer to the start of the first data buffer that's encoded
     uint32_t get_data_offset() {
-      if (largest_data_off_in_tbl) {
-	return largest_data_off_in_tbl +
+      if (largest_data_off_in_data) {
+	return largest_data_off_in_data +
 	  sizeof(__u8) +  // encode struct_v
 	  sizeof(__u8) +  // encode compat_v
 	  sizeof(__u32) + // encode len
@@ -516,8 +528,10 @@ public:
 	  sizeof(pad_unused_bytes) +
 	  sizeof(largest_data_len) +
 	  sizeof(largest_data_off) +
-	  sizeof(largest_data_off_in_tbl) +
-	  sizeof(__u32);  // tbl length
+	  sizeof(largest_data_off_in_data) +
+	  sizeof(__u32) +  // tbl length
+          tbl.length() +   // (added bt tanghao)
+          sizeof(__u32);   // data length (added bt tanghao)
       }
       return 0;  // none
     }
@@ -555,6 +569,8 @@ public:
      */
     class iterator {
       bufferlist::iterator p;
+      bufferlist &data; 
+      uint64_t offset;
       bool sobject_encoding;
       int64_t pool_override;
       bool use_pool_override;
@@ -563,6 +579,8 @@ public:
 
       iterator(Transaction *t)
 	: p(t->tbl.begin()),
+          data(t->data),
+          offset(0),
 	  sobject_encoding(t->sobject_encoding),
 	  pool_override(t->pool_override),
 	  use_pool_override(t->use_pool_override),
@@ -589,6 +607,10 @@ public:
 	__u32 op;
 	::decode(op, p);
 	return op;
+      }
+      void decode_data(bufferlist& bl, uint64_t len) {
+        bl.substr_of(data, offset, len);
+        offset += len;
       }
       void decode_bl(bufferlist& bl) {
 	::decode(bl, p);
@@ -698,20 +720,21 @@ public:
      * "hole" in the file.
      */
     void write(coll_t cid, const ghobject_t& oid, uint64_t off, uint64_t len,
-	       const bufferlist& data) {
+	       const bufferlist& buf) {
       __u32 op = OP_WRITE;
       ::encode(op, tbl);
       ::encode(cid, tbl);
       ::encode(oid, tbl);
       ::encode(off, tbl);
       ::encode(len, tbl);
-      assert(len == data.length());
+      assert(len == buf.length());
       if (data.length() > largest_data_len) {
 	largest_data_len = data.length();
 	largest_data_off = off;
-	largest_data_off_in_tbl = tbl.length() + sizeof(__u32);  // we are about to
+        largest_data_off_in_data = data.length() ;
       }
-      ::encode(data, tbl);
+      data.append(buf);
+      data_list.push_back(make_pair(oid, buf));
       ops++;
     }
     /**
@@ -1064,13 +1087,13 @@ public:
 
     // etc.
     Transaction() :
-      ops(0), pad_unused_bytes(0), largest_data_len(0), largest_data_off(0), largest_data_off_in_tbl(0),
+      ops(0), pad_unused_bytes(0), largest_data_len(0), largest_data_off(0), largest_data_off_in_data(0),
       sobject_encoding(false), pool_override(-1), use_pool_override(false),
       replica(false),
       tolerate_collection_add_enoent(false), osr(NULL) {}
 
     Transaction(bufferlist::iterator &dp) :
-      ops(0), pad_unused_bytes(0), largest_data_len(0), largest_data_off(0), largest_data_off_in_tbl(0),
+      ops(0), pad_unused_bytes(0), largest_data_len(0), largest_data_off(0), largest_data_off_in_data(0),
       sobject_encoding(false), pool_override(-1), use_pool_override(false),
       replica(false),
       tolerate_collection_add_enoent(false), osr(NULL) {
@@ -1078,7 +1101,7 @@ public:
     }
 
     Transaction(bufferlist &nbl) :
-      ops(0), pad_unused_bytes(0), largest_data_len(0), largest_data_off(0), largest_data_off_in_tbl(0),
+      ops(0), pad_unused_bytes(0), largest_data_len(0), largest_data_off(0), largest_data_off_in_data(0),
       sobject_encoding(false), pool_override(-1), use_pool_override(false),
       replica(false),
       tolerate_collection_add_enoent(false), osr(NULL) {
@@ -1086,14 +1109,25 @@ public:
       decode(dp);
     }
 
+    void _encode(bufferlist &meta, list< pair<ghobject_t, bufferlist> > &datalst);
+    void _decode(bufferlist::iterator &meta);
+
     void encode(bufferlist& bl) const {
       ENCODE_START(7, 5, bl);
       ::encode(ops, bl);
       ::encode(pad_unused_bytes, bl);
       ::encode(largest_data_len, bl);
       ::encode(largest_data_off, bl);
-      ::encode(largest_data_off_in_tbl, bl);
+      ::encode(largest_data_off_in_data, bl);
+
+      list< pair<ghobject_t, int> > object_len_lst; 
+      for (list< pair<ghobject_t, bufferlist> >::const_iterator it = data_list.begin();
+	      it != data_list.end();
+	      ++it)
+	  object_len_lst.push_back(make_pair(it->first, it->second.length()));
+      ::encode(object_len_lst, bl);
       ::encode(tbl, bl);
+      ::encode(data,bl);
       ::encode(tolerate_collection_add_enoent, bl);
       ENCODE_FINISH(bl);
     }
@@ -1109,9 +1143,21 @@ public:
       if (struct_v >= 3) {
 	::decode(largest_data_len, bl);
 	::decode(largest_data_off, bl);
-	::decode(largest_data_off_in_tbl, bl);
+	::decode(largest_data_off_in_data, bl);
       }
+      list< pair<ghobject_t, int> > object_len_lst;
+      ::decode(object_len_lst, bl);
       ::decode(tbl, bl);
+      ::decode(data, bl);
+      bufferlist buf = data;
+      for (list< pair<ghobject_t, int> >::iterator it=object_len_lst.begin();
+	      it != object_len_lst.end();
+	      ++it) {
+	  bufferlist temp;
+	  buf.splice(0, it->second, &temp);
+	  data_list.push_back(make_pair(it->first, temp));
+      }
+
       if (struct_v < 6) {
 	use_pool_override = true;
       }

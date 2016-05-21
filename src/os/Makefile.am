@@ -16,6 +16,11 @@ libos_la_SOURCES = \
 	os/JournalingObjectStore.cc \
 	os/LevelDBStore.cc \
 	os/LFNIndex.cc \
+	os/NVMStore.cc \
+	os/RWJournal.cc \
+	os/NVMJournal.cc \
+	os/ObjectAttrStore.cc \
+	os/ObjectDataStore.cc \
 	os/MemStore.cc \
 	os/KeyValueDB.cc \
 	os/KeyValueStore.cc \
@@ -63,6 +68,11 @@ noinst_HEADERS += \
 	os/KeyValueDB.h \
 	os/LevelDBStore.h \
 	os/LFNIndex.h \
+	os/NVMStore.h \
+	os/RWJournal.h \
+	os/NVMJournal.h \
+	os/ObjectAttrStore.h \
+	os/ObjectDataStore.h \
 	os/MemStore.h \
 	os/KeyValueStore.h \
 	os/ObjectMap.h \

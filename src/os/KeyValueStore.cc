@@ -1201,7 +1201,8 @@ unsigned KeyValueStore::_do_transaction(Transaction& transaction,
         uint64_t len = i.decode_length();
         bool replica = i.get_replica();
         bufferlist bl;
-        i.decode_bl(bl);
+        //i.decode_bl(bl);
+        i.decode_data(bl, len);
         r = _write(cid, oid, off, len, bl, t, replica);
       }
       break;

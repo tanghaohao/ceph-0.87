@@ -19,6 +19,7 @@
 #include "FileStore.h"
 #include "MemStore.h"
 #include "KeyValueStore.h"
+#include "NVMStore.h"
 #include "common/safe_io.h"
 
 ObjectStore *ObjectStore::create(CephContext *cct,
@@ -36,6 +37,8 @@ ObjectStore *ObjectStore::create(CephContext *cct,
   if (type == "keyvaluestore-dev") {
     return new KeyValueStore(data);
   }
+  if (type == "nvmstore")
+      return new NVMStore(cct, data, cct->_conf->nvm_hot_journal, cct->_conf->nvm_cold_journal);
   return NULL;
 }
 
@@ -159,3 +162,30 @@ int ObjectStore::collection_list_range(coll_t c, hobject_t start, hobject_t end,
   }
   return ret;
 }
+
+void ObjectStore::Transaction::_encode(bufferlist &meta, list< pair<ghobject_t, bufferlist> > &datalst)
+{
+    ENCODE_START(7, 5, meta);
+    ::encode(ops, meta);
+    ::encode(tbl, meta);
+    ::encode(tolerate_collection_add_enoent, meta);
+    ENCODE_FINISH(meta);
+    datalst.assign(data_list.begin(), data_list.end());
+}
+void ObjectStore::Transaction::_decode(bufferlist::iterator &meta)
+{
+    DECODE_START_LEGACY_COMPAT_LEN(7, 5, 5, meta);
+    DECODE_OLDEST(2);
+    if (struct_v < 4)
+	sobject_encoding = true;
+    else
+	sobject_encoding = false;
+    ::decode(ops, meta);
+    ::decode(tbl, meta);
+    if (struct_v < 6)
+	use_pool_override = true;
+    if (struct_v >=7)
+	::decode(tolerate_collection_add_enoent, meta);
+    DECODE_FINISH(meta);
+}
+

@@ -36,7 +36,8 @@ void ObjectStore::Transaction::dump(ceph::Formatter *f)
 	uint64_t off = i.decode_length();
 	uint64_t len = i.decode_length();
 	bufferlist bl;
-	i.decode_bl(bl);
+	//i.decode_bl(bl);
+    i.decode_data(bl, len);
 	f->dump_string("op_name", "write");
 	f->dump_stream("collection") << cid;
 	f->dump_stream("oid") << oid;

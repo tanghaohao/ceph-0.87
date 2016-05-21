@@ -36,6 +36,7 @@ void JournalingObjectStore::journal_write_close()
 
 int JournalingObjectStore::journal_replay(uint64_t fs_op_seq)
 {
+  dout(0) << "Journal_replay begin ..." << dendl;
   dout(10) << "journal_replay fs op_seq " << fs_op_seq << dendl;
 
   if (g_conf->journal_replay_from) {
@@ -101,6 +102,7 @@ int JournalingObjectStore::journal_replay(uint64_t fs_op_seq)
     dout(3) << "journal_replay: r = " << r << ", op_seq now " << op_seq << dendl;
   }
 
+  dout(0) << "...Journal_replay end " << dendl;
   replaying = false;
 
   submit_manager.set_op_seq(op_seq);
